@@ -271,6 +271,10 @@ public class MiniClusterState {
         cluster =
             new MiniSolrCloudCluster.Builder(nodeCount, miniClusterBaseDir)
                 .formatZkServer(false)
+                .withSolrXml(
+                    MiniSolrCloudCluster.DEFAULT_CLOUD_SOLR_XML.replace(
+                        "</solr>",
+                        "  <int name=\"indexSearcherExecutorThreads\">${solr.searchThreads:0}</int>\n</solr>"))
                 .addConfig("conf", getFile("src/resources/configs/cloud-minimal/conf"))
                 .configure();
       } catch (Exception e) {

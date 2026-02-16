@@ -63,8 +63,11 @@ public class ExitableDirectoryReaderSearch {
 
     Docs queryFields;
 
-    int NUM_DOCS = 500_000;
+    int NUM_DOCS = 1_000_000;
     int WORDS = NUM_DOCS / 100;
+
+    @Param({"0", "4","8"})
+    int searchThreads = 4;
 
     @Setup(Level.Trial)
     public void setupTrial(MiniClusterState.MiniClusterBenchState miniClusterState)
@@ -73,10 +76,11 @@ public class ExitableDirectoryReaderSearch {
       System.setProperty("documentCache.enabled", "false");
       System.setProperty("queryResultCache.enabled", "false");
       System.setProperty("filterCache.enabled", "false");
-      System.setProperty("miniClusterBaseDir", "build/work/mini-cluster");
+      System.setProperty("miniClusterBaseDir", "build/work/mini-cluster-" + searchThreads);
       // create a lot of small segments
       System.setProperty("segmentsPerTier", "200");
-      System.setProperty("maxBufferedDocs", "100");
+      System.setProperty("maxBufferedDocs", "5000");
+      System.setProperty("solr.searchThreads", String.valueOf(searchThreads));
 
       miniClusterState.startMiniCluster(1);
       log("######### Creating index ...");
@@ -104,7 +108,7 @@ public class ExitableDirectoryReaderSearch {
                   "f9_ts",
                   strings().alpha().maxCardinality(WORDS).multi(50).ofLengthBetween(3, 10));
       miniClusterState.index(COLLECTION, docs, NUM_DOCS, true);
-      miniClusterState.forceMerge(COLLECTION, 200);
+      miniClusterState.forceMerge(COLLECTION, 5);
       miniClusterState.dumpCoreInfo();
     }
 
@@ -152,9 +156,11 @@ public class ExitableDirectoryReaderSearch {
     }
   }
 
-  private static ModifiableSolrParams createInitialParams() {
+  private static ModifiableSolrParams createInitialParams(int searchThreads) {
     ModifiableSolrParams params =
-        MiniClusterState.params("rows", "100", "timeAllowed", "1000", "fl", "*");
+        MiniClusterState.params(
+            "rows", "100", "timeAllowed", "1000", "fl", "*",
+            "multiThreaded", String.valueOf(searchThreads > 0));
     return params;
   }
 
@@ -163,7 +169,7 @@ public class ExitableDirectoryReaderSearch {
       MiniClusterState.MiniClusterBenchState miniClusterState, Blackhole bh, BenchState state)
       throws Exception {
     SolrInputDocument queryDoc = state.queryFields.inputDocument();
-    ModifiableSolrParams params = createInitialParams();
+    ModifiableSolrParams params = createInitialParams(state.searchThreads);
     params.set("q", "f1_ts:" + queryDoc.getFieldValue("f1_ts").toString());
     QueryRequest queryRequest = new QueryRequest(params);
     QueryResponse rsp = queryRequest.process(miniClusterState.client, COLLECTION);
@@ -174,17 +180,10 @@ public class ExitableDirectoryReaderSearch {
   public void testLongQuery(
       MiniClusterState.MiniClusterBenchState miniClusterState, Blackhole bh, BenchState state)
       throws Exception {
-    SolrInputDocument queryDoc = state.queryFields.inputDocument();
-    ModifiableSolrParams params = createInitialParams();
-    StringBuilder query = new StringBuilder();
-    for (int i = 2; i < 10; i++) {
-      if (query.length() > 0) {
-        query.append(" ");
-      }
-      String fld = "f" + i + "_ts";
-      query.append(fld + ":\"" + queryDoc.getFieldValue(fld) + "\"~20");
-    }
-    params.set("q", query.toString());
+    ModifiableSolrParams params = createInitialParams(state.searchThreads);
+    params.set("q", "*:*");
+    params.set("sort", "id asc");
+    params.set("rows", "500");
     QueryRequest queryRequest = new QueryRequest(params);
     QueryResponse rsp = queryRequest.process(miniClusterState.client, COLLECTION);
     bh.consume(rsp);

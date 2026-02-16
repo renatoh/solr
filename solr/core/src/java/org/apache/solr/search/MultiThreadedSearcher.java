@@ -94,7 +94,10 @@ public class MultiThreadedSearcher {
     final SolrMultiCollectorManager manager = new SolrMultiCollectorManager(cmd, colls);
     Object[] ret;
     try {
+      long start = System.nanoTime();
       ret = searcher.search(query, manager);
+      long elapsed = System.nanoTime() - start;
+      System.out.println("MT search took " + (elapsed / 1_000_000.0) + " ms");
     } catch (EarlyTerminatingCollectorException ex) {
       ret = manager.reduce();
       queryResult.setMaxHitsTerminatedEarly(true);

@@ -244,6 +244,7 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable, SolrI
    */
   public static ExecutorService initCollectorExecutor(NodeConfig cfg) {
     int indexSearcherExecutorThreads = cfg.getIndexSearcherExecutorThreads();
+    System.out.println("IndexSearcherExecutorThreads:" + cfg.getIndexSearcherExecutorThreads());
     if (indexSearcherExecutorThreads == 0) {
       return null;
     } else if (indexSearcherExecutorThreads < 0) {
@@ -803,7 +804,9 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable, SolrI
     QueryLimits queryLimits = QueryLimits.getCurrentLimits();
     if (!queryLimits.isLimitsEnabled()) {
       // no timeout.  Pass through to super class
+      long start = System.nanoTime();
       super.search(query, collector);
+      System.out.println("ST  search took " + ((System.nanoTime() - start) / 1_000_000.0) + " ms");
     } else {
       // Timeout enabled!  This impl is maybe a hack.  Use Lucene's IndexSearcher timeout.
       // But only some queries have it so don't use on "this" (SolrIndexSearcher), not to mention
@@ -816,7 +819,9 @@ public class SolrIndexSearcher extends IndexSearcher implements Closeable, SolrI
           setTimeout(queryLimits); // Lucene's method name is less than ideal here...
           // XXX Deprecated in Lucene 10, we should probably use search(Query, CollectorManager)
           // instead
+          long start = System.nanoTime();
           super.search(query, collector);
+          System.out.println("ST  search took " + ((System.nanoTime() - start) / 1_000_000.0) + " ms");
           if (timedOut()) {
             throw new QueryLimitsExceededException(
                 "Limits exceeded! (search): " + queryLimits.limitStatusMessage());
