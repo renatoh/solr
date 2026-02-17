@@ -69,6 +69,9 @@ public class ExitableDirectoryReaderSearch {
     @Param({"0", "4","8"})
     int searchThreads = 4;
 
+    @Param({"5", "200"})
+    int forceMergeSegments = 200;
+
     @Setup(Level.Trial)
     public void setupTrial(MiniClusterState.MiniClusterBenchState miniClusterState)
         throws Exception {
@@ -108,7 +111,7 @@ public class ExitableDirectoryReaderSearch {
                   "f9_ts",
                   strings().alpha().maxCardinality(WORDS).multi(50).ofLengthBetween(3, 10));
       miniClusterState.index(COLLECTION, docs, NUM_DOCS, true);
-      miniClusterState.forceMerge(COLLECTION, 5);
+      miniClusterState.forceMerge(COLLECTION, forceMergeSegments);
       miniClusterState.dumpCoreInfo();
     }
 
@@ -165,19 +168,27 @@ public class ExitableDirectoryReaderSearch {
   }
 
   @Benchmark
-  public void testShortQuery(
+  public void testLongQuery(
       MiniClusterState.MiniClusterBenchState miniClusterState, Blackhole bh, BenchState state)
       throws Exception {
     SolrInputDocument queryDoc = state.queryFields.inputDocument();
     ModifiableSolrParams params = createInitialParams(state.searchThreads);
-    params.set("q", "f1_ts:" + queryDoc.getFieldValue("f1_ts").toString());
+    StringBuilder query = new StringBuilder();
+    for (int i = 2; i < 10; i++) {
+      if (query.length() > 0) {
+        query.append(" ");
+      }
+      String fld = "f" + i + "_ts";
+      query.append(fld + ":\"" + queryDoc.getFieldValue(fld) + "\"~20");
+    }
+    params.set("q", query.toString());
     QueryRequest queryRequest = new QueryRequest(params);
     QueryResponse rsp = queryRequest.process(miniClusterState.client, COLLECTION);
     bh.consume(rsp);
   }
 
   @Benchmark
-  public void testLongQuery(
+  public void testLongQuery2(
       MiniClusterState.MiniClusterBenchState miniClusterState, Blackhole bh, BenchState state)
       throws Exception {
     ModifiableSolrParams params = createInitialParams(state.searchThreads);
@@ -188,4 +199,18 @@ public class ExitableDirectoryReaderSearch {
     QueryResponse rsp = queryRequest.process(miniClusterState.client, COLLECTION);
     bh.consume(rsp);
   }
+
+  @Benchmark
+  public void testRangeQuery(
+      MiniClusterState.MiniClusterBenchState miniClusterState, Blackhole bh, BenchState state)
+      throws Exception {
+    ModifiableSolrParams params = createInitialParams(state.searchThreads);
+    params.set("q", "f1_ts:[a TO m] AND f2_ts:[d TO p] AND f3_ts:[b TO k] AND f4_ts:[e TO s] AND f5_ts:[a TO u]");
+    params.set("sort", "id asc");
+    params.set("rows", "500");
+    QueryRequest queryRequest = new QueryRequest(params);
+    QueryResponse rsp = queryRequest.process(miniClusterState.client, COLLECTION);
+    bh.consume(rsp);
+  }
+
 }
