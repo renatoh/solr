@@ -19,15 +19,14 @@ package org.apache.solr.handler;
 import io.prometheus.metrics.model.snapshots.CounterSnapshot;
 import io.prometheus.metrics.model.snapshots.Labels;
 import java.io.IOException;
-import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
+import org.apache.solr.client.solrj.request.SolrQuery;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.util.SolrMetricTestUtils;
-import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -45,11 +44,6 @@ public class RequestHandlerMetricsTest extends SolrCloudTestCase {
   public void setUp() throws Exception {
     super.setUp();
     cluster.deleteAllCollections();
-  }
-
-  @AfterClass
-  public static void afterClass() {
-    System.clearProperty("metricsEnabled");
   }
 
   @Test

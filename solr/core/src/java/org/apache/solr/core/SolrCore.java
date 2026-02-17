@@ -17,8 +17,6 @@
 package org.apache.solr.core;
 
 import static org.apache.solr.common.params.CommonParams.PATH;
-import static org.apache.solr.handler.admin.MetricsHandler.OPEN_METRICS_WT;
-import static org.apache.solr.handler.admin.MetricsHandler.PROMETHEUS_METRICS_WT;
 import static org.apache.solr.metrics.SolrCoreMetricManager.COLLECTION_ATTR;
 import static org.apache.solr.metrics.SolrCoreMetricManager.CORE_ATTR;
 import static org.apache.solr.metrics.SolrCoreMetricManager.REPLICA_TYPE_ATTR;
@@ -84,7 +82,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.LockObtainFailedException;
 import org.apache.lucene.util.ResourceLoader;
-import org.apache.solr.client.solrj.impl.JavaBinResponseParser;
+import org.apache.solr.client.solrj.response.JavaBinResponseParser;
 import org.apache.solr.cloud.CloudDescriptor;
 import org.apache.solr.cloud.RecoveryStrategy;
 import org.apache.solr.cloud.ZkSolrResourceLoader;
@@ -112,7 +110,6 @@ import org.apache.solr.core.snapshots.SolrSnapshotMetaDataManager.SnapshotMetaDa
 import org.apache.solr.handler.IndexFetcher;
 import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.handler.SolrConfigHandler;
-import org.apache.solr.handler.admin.api.ReplicationAPIBase;
 import org.apache.solr.handler.api.V2ApiUtils;
 import org.apache.solr.handler.component.HighlightComponent;
 import org.apache.solr.handler.component.SearchComponent;
@@ -129,19 +126,9 @@ import org.apache.solr.pkg.SolrPackageLoader;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.request.SolrRequestInfo;
-import org.apache.solr.response.CSVResponseWriter;
-import org.apache.solr.response.CborResponseWriter;
-import org.apache.solr.response.GeoJSONResponseWriter;
-import org.apache.solr.response.GraphMLResponseWriter;
-import org.apache.solr.response.JacksonJsonWriter;
-import org.apache.solr.response.JavaBinResponseWriter;
-import org.apache.solr.response.PrometheusResponseWriter;
 import org.apache.solr.response.QueryResponseWriter;
-import org.apache.solr.response.RawResponseWriter;
-import org.apache.solr.response.SchemaXmlResponseWriter;
-import org.apache.solr.response.SmileResponseWriter;
+import org.apache.solr.response.ResponseWritersRegistry;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.response.XMLResponseWriter;
 import org.apache.solr.response.transform.TransformerFactory;
 import org.apache.solr.rest.ManagedResourceStorage;
 import org.apache.solr.rest.ManagedResourceStorage.StorageIO;
@@ -173,8 +160,8 @@ import org.apache.solr.update.processor.UpdateRequestProcessorChain;
 import org.apache.solr.update.processor.UpdateRequestProcessorChain.ProcessorInfo;
 import org.apache.solr.update.processor.UpdateRequestProcessorFactory;
 import org.apache.solr.util.IOFunction;
+import org.apache.solr.util.IndexInputInputStream;
 import org.apache.solr.util.IndexOutputOutputStream;
-import org.apache.solr.util.PropertiesInputStream;
 import org.apache.solr.util.RefCounted;
 import org.apache.solr.util.TestInjection;
 import org.apache.solr.util.circuitbreaker.CircuitBreaker;
@@ -461,7 +448,7 @@ public class SolrCore implements SolrInfoBean, Closeable {
       return dataDir + "index/";
     }
     // c'tor just assigns a variable here, no exception thrown.
-    final InputStream is = new PropertiesInputStream(input);
+    final InputStream is = new IndexInputInputStream(input);
     try {
       Properties p = new Properties();
       p.load(new InputStreamReader(is, StandardCharsets.UTF_8));
@@ -1581,7 +1568,7 @@ public class SolrCore implements SolrInfoBean, Closeable {
     try {
       final IndexInput input =
           dir.openInput(IndexFetcher.INDEX_PROPERTIES, DirectoryFactory.IOCONTEXT_NO_CACHE);
-      final InputStream is = new PropertiesInputStream(input);
+      final InputStream is = new IndexInputInputStream(input);
       try {
         p.load(new InputStreamReader(is, StandardCharsets.UTF_8));
       } catch (Exception e) {
@@ -2476,7 +2463,7 @@ public class SolrCore implements SolrInfoBean, Closeable {
                   true,
                   directoryFactory);
         } else {
-          RefCounted<IndexWriter> writer = getSolrCoreState().getIndexWriter(this);
+          RefCounted<IndexWriter> writer = getSolrCoreState().getIndexWriter(this, false);
           DirectoryReader newReader = null;
           try {
             newReader = indexReaderFactory.newReader(writer.get(), this);
@@ -3088,51 +3075,6 @@ public class SolrCore implements SolrInfoBean, Closeable {
 
   private final PluginBag<QueryResponseWriter> responseWriters =
       new PluginBag<>(QueryResponseWriter.class, this);
-  public static final Map<String, QueryResponseWriter> DEFAULT_RESPONSE_WRITERS;
-
-  static {
-    HashMap<String, QueryResponseWriter> m = new HashMap<>(15, 1);
-    m.put("xml", new XMLResponseWriter());
-    m.put(CommonParams.JSON, new JacksonJsonWriter());
-    m.put("standard", m.get(CommonParams.JSON));
-    m.put("geojson", new GeoJSONResponseWriter());
-    m.put("graphml", new GraphMLResponseWriter());
-    m.put("raw", new RawResponseWriter());
-    m.put(CommonParams.JAVABIN, new JavaBinResponseWriter());
-    m.put("cbor", new CborResponseWriter());
-    m.put("csv", new CSVResponseWriter());
-    m.put("schema.xml", new SchemaXmlResponseWriter());
-    m.put("smile", new SmileResponseWriter());
-    m.put(PROMETHEUS_METRICS_WT, new PrometheusResponseWriter());
-    m.put(OPEN_METRICS_WT, new PrometheusResponseWriter());
-    m.put(ReplicationAPIBase.FILE_STREAM, getFileStreamWriter());
-    DEFAULT_RESPONSE_WRITERS = Collections.unmodifiableMap(m);
-  }
-
-  private static JavaBinResponseWriter getFileStreamWriter() {
-    return new JavaBinResponseWriter() {
-      @Override
-      public void write(
-          OutputStream out, SolrQueryRequest req, SolrQueryResponse response, String contentType)
-          throws IOException {
-        RawWriter rawWriter = (RawWriter) response.getValues().get(ReplicationAPIBase.FILE_STREAM);
-        if (rawWriter != null) {
-          rawWriter.write(out);
-          if (rawWriter instanceof Closeable) ((Closeable) rawWriter).close();
-        }
-      }
-
-      @Override
-      public String getContentType(SolrQueryRequest request, SolrQueryResponse response) {
-        RawWriter rawWriter = (RawWriter) response.getValues().get(ReplicationAPIBase.FILE_STREAM);
-        if (rawWriter != null) {
-          return rawWriter.getContentType();
-        } else {
-          return JavaBinResponseParser.JAVABIN_CONTENT_TYPE;
-        }
-      }
-    };
-  }
 
   public void fetchLatestSchema() {
     IndexSchema schema = configSet.getIndexSchema(true);
@@ -3148,18 +3090,52 @@ public class SolrCore implements SolrInfoBean, Closeable {
   }
 
   /**
-   * Configure the query response writers. There will always be a default writer; additional writers
-   * may also be configured.
+   * Gets a response writer suitable for node/container-level requests.
+   *
+   * @param writerName the writer name, or null for default
+   * @return the response writer, never null
+   * @deprecated Use {@link ResponseWritersRegistry#getWriter(String)} instead.
    */
-  private void initWriters() {
-    responseWriters.init(DEFAULT_RESPONSE_WRITERS, this);
-    // configure the default response writer; this one should never be null
-    if (responseWriters.getDefault() == null) responseWriters.setDefault("standard");
+  @Deprecated
+  public static QueryResponseWriter getAdminResponseWriter(String writerName) {
+    return ResponseWritersRegistry.getWriter(writerName);
   }
 
-  /** Finds a writer by name, or returns the default writer if not found. */
+  /**
+   * Initializes query response writers. Response writers from {@code ImplicitPlugins.json} may also
+   * be configured.
+   */
+  private void initWriters() {
+    // Build default writers map from implicit plugins
+    Map<String, QueryResponseWriter> defaultWriters = new HashMap<>();
+
+    // Start with built-in writers that are always available
+    defaultWriters.putAll(ResponseWritersRegistry.getAllWriters());
+
+    // Load writers from ImplicitPlugins.json (may override built-ins)
+    List<PluginInfo> implicitWriters = getImplicitResponseWriters();
+    for (PluginInfo info : implicitWriters) {
+      try {
+        QueryResponseWriter writer =
+            createInstance(
+                info.className,
+                QueryResponseWriter.class,
+                "queryResponseWriter",
+                null,
+                getResourceLoader());
+        defaultWriters.put(info.name, writer);
+      } catch (Exception e) {
+        log.warn("Failed to load implicit response writer: {}", info.name, e);
+      }
+    }
+
+    // Initialize with the built defaults
+    responseWriters.init(defaultWriters, this);
+  }
+
+  /** Finds a writer by name, or null if not found. */
   public final QueryResponseWriter getQueryResponseWriter(String writerName) {
-    return responseWriters.get(writerName, true);
+    return responseWriters.get(writerName, false);
   }
 
   /**
@@ -3563,7 +3539,7 @@ public class SolrCore implements SolrInfoBean, Closeable {
   private static boolean checkStale(SolrZkClient zkClient, String zkPath, int currentVersion) {
     if (zkPath == null) return false;
     try {
-      Stat stat = zkClient.exists(zkPath, null, true);
+      Stat stat = zkClient.exists(zkPath, null);
       if (stat == null) {
         if (currentVersion > -1) return true;
         return false;
@@ -3614,32 +3590,49 @@ public class SolrCore implements SolrInfoBean, Closeable {
     }
   }
 
-  private static final class ImplicitHolder {
-    private ImplicitHolder() {}
+  private static final class ImplicitPluginsHolder {
+    private ImplicitPluginsHolder() {}
 
-    private static final List<PluginInfo> INSTANCE;
+    private static final Map<String, List<PluginInfo>> ALL_IMPLICIT_PLUGINS;
 
     static {
       @SuppressWarnings("unchecked")
       Map<String, ?> implicitPluginsInfo =
           (Map<String, ?>)
               Utils.fromJSONResource(SolrCore.class.getClassLoader(), "ImplicitPlugins.json");
-      @SuppressWarnings("unchecked")
-      Map<String, Map<String, Object>> requestHandlers =
-          (Map<String, Map<String, Object>>) implicitPluginsInfo.get(SolrRequestHandler.TYPE);
 
-      List<PluginInfo> implicits = new ArrayList<>(requestHandlers.size());
-      for (Map.Entry<String, Map<String, Object>> entry : requestHandlers.entrySet()) {
-        Map<String, Object> info = entry.getValue();
-        info.put(CommonParams.NAME, entry.getKey());
-        implicits.add(new PluginInfo(SolrRequestHandler.TYPE, info));
+      Map<String, List<PluginInfo>> plugins = new HashMap<>();
+
+      // Load all plugin types from the JSON
+      for (Map.Entry<String, ?> entry : implicitPluginsInfo.entrySet()) {
+        String pluginType = entry.getKey();
+        @SuppressWarnings("unchecked")
+        Map<String, Map<String, Object>> pluginConfigs =
+            (Map<String, Map<String, Object>>) entry.getValue();
+
+        List<PluginInfo> pluginInfos = new ArrayList<>(pluginConfigs.size());
+        for (Map.Entry<String, Map<String, Object>> plugin : pluginConfigs.entrySet()) {
+          Map<String, Object> info = plugin.getValue();
+          info.put(CommonParams.NAME, plugin.getKey());
+          pluginInfos.add(new PluginInfo(pluginType, info));
+        }
+        plugins.put(pluginType, Collections.unmodifiableList(pluginInfos));
       }
-      INSTANCE = Collections.unmodifiableList(implicits);
+
+      ALL_IMPLICIT_PLUGINS = Collections.unmodifiableMap(plugins);
+    }
+
+    public static List<PluginInfo> getImplicitPlugins(String type) {
+      return ALL_IMPLICIT_PLUGINS.getOrDefault(type, Collections.emptyList());
     }
   }
 
   public List<PluginInfo> getImplicitHandlers() {
-    return ImplicitHolder.INSTANCE;
+    return ImplicitPluginsHolder.getImplicitPlugins(SolrRequestHandler.TYPE);
+  }
+
+  public List<PluginInfo> getImplicitResponseWriters() {
+    return ImplicitPluginsHolder.getImplicitPlugins("queryResponseWriter");
   }
 
   public CancellableQueryTracker getCancellableQueryTracker() {

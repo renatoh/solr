@@ -161,7 +161,15 @@ public class DistributedZkUpdateProcessor extends DistributedUpdateProcessor {
     assert TestInjection.injectFailUpdateRequests();
 
     if (isReadOnly()) {
-      throw new SolrException(ErrorCode.FORBIDDEN, "Collection " + collection + " is read-only.");
+      if (cmd.failOnReadOnly) {
+        throw new SolrException(ErrorCode.FORBIDDEN, "Collection " + collection + " is read-only.");
+      } else {
+        // Committing on a readOnly core/collection is a no-op, since the core was committed when
+        // becoming read-only and hasn't had any updates since.
+        assert ulog == null || !ulog.hasUncommittedChanges()
+            : "Uncommitted changes found when trying to commit on a read-only collection";
+        return;
+      }
     }
 
     List<SolrCmdDistributor.Node> nodes = null;
@@ -1378,7 +1386,7 @@ public class DistributedZkUpdateProcessor extends DistributedUpdateProcessor {
 
     // Streaming updates can delay shutdown and cause big update reorderings (new streams can't be
     // initiated, but existing streams carry on).  This is why we check if the CC is shutdown.
-    // See SOLR-8203 and loop HdfsChaosMonkeyNothingIsSafeTest (and check for inconsistent shards)
+    // See SOLR-8203 and loop ChaosMonkeyNothingIsSafeTest (and check for inconsistent shards)
     // to test.
     if (req.getCoreContainer().isShutDown()) {
       throw new SolrException(
