@@ -227,7 +227,7 @@ IF DEFINED SOLR_AUTH_TYPE (
 
 IF DEFINED SOLR_AUTH_TYPE (
   IF /I "%SOLR_AUTH_TYPE%" == "basic" (
-    set SOLR_AUTHENTICATION_CLIENT_BUILDER="org.apache.solr.client.solrj.impl.PreemptiveBasicAuthClientBuilderFactory"
+    set SOLR_AUTHENTICATION_CLIENT_BUILDER="org.apache.solr.client.solrj.jetty.PreemptiveBasicAuthClientCustomizer"
   ) ELSE (
     echo ERROR: Value specified for SOLR_AUTH_TYPE configuration variable is invalid.
     goto err
@@ -239,7 +239,7 @@ IF DEFINED SOLR_AUTHENTICATION_CLIENT_CONFIGURER (
   echo          Please start using SOLR_AUTH_TYPE instead
 )
 IF DEFINED SOLR_AUTHENTICATION_CLIENT_BUILDER (
-  set AUTHC_CLIENT_BUILDER_ARG="-Dsolr.httpclient.builder.factory=%SOLR_AUTHENTICATION_CLIENT_BUILDER%"
+  set AUTHC_CLIENT_BUILDER_ARG="-Dsolr.solrj.http.jetty.customizer=%SOLR_AUTHENTICATION_CLIENT_BUILDER%"
 )
 set "AUTHC_OPTS=%AUTHC_CLIENT_BUILDER_ARG% %SOLR_AUTHENTICATION_OPTS%"
 
@@ -325,12 +325,6 @@ goto err
 @echo   --data-home dir Sets the solr.data.home system property, where Solr will store index data in ^<instance_dir^>/data subdirectories.
 @echo                   If not set, Solr uses solr.solr.home for both config and data.
 @echo.
-@echo   -e/--example name Name of the example to run; available examples:
-@echo       cloud:          SolrCloud example
-@echo       techproducts:   Comprehensive example illustrating many of Solr's core capabilities
-@echo       schemaless:     Schema-less example (schema is inferred from data during indexing)
-@echo       films:          Example of starting with _default configset and defining explicit fields dynamically
-@echo.
 @echo   --jvm-opts opts Additional parameters to pass to the JVM when starting Solr, such as to setup
 @echo                 Java debug options. For example, to enable a Java debugger to attach to the Solr JVM
 @echo                 you could pass: --jvm-opts "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=18983"
@@ -341,7 +335,15 @@ goto err
 @echo                 you could pass: -j "--include-jetty-dir=/etc/jetty/custom/server/"
 @echo                 In most cases, you should wrap the additional parameters in double quotes.
 @echo.
+@echo   -e/--example name Name of the example to run; available examples:
+@echo       cloud:          SolrCloud example
+@echo       techproducts:   Comprehensive example illustrating many of Solr's core capabilities
+@echo       schemaless:     Schema-less example (schema is inferred from data during indexing)
+@echo       films:          Example of starting with _default configset and defining explicit fields dynamically
+@echo.
 @echo   -y/--no-prompt Don't prompt for input; accept all defaults when running examples that accept user input
+@echo.
+@echo   --prompt-inputs values Don't prompt for input; comma delimited list of inputs read when running examples that accept user input.
 @echo.
 @echo   --verbose and -q/--quiet Verbose or quiet logging. Sets default log level to DEBUG or WARN instead of INFO
 @echo.
@@ -399,6 +401,7 @@ IF "%1"=="-j" goto set_addl_jetty_config
 IF "%1"=="--jettyconfig" goto set_addl_jetty_config
 IF "%1"=="-y" goto set_noprompt
 IF "%1"=="--no-prompt" goto set_noprompt
+IF "%1"=="--prompt-inputs" goto set_prompt_inputs
 
 REM Skip stop arg parsing if not stop command
 IF NOT "%SCRIPT_CMD%"=="stop" goto parse_general_args
@@ -443,6 +446,7 @@ goto parse_args
 
 :set_user_managed_mode
 set SOLR_MODE=user-managed
+set "PASS_TO_RUN_EXAMPLE=--user-managed !PASS_TO_RUN_EXAMPLE!"
 SHIFT
 goto parse_args
 
@@ -691,6 +695,13 @@ goto parse_args
 set NO_USER_PROMPT=1
 set "PASS_TO_RUN_EXAMPLE=--no-prompt !PASS_TO_RUN_EXAMPLE!"
 
+SHIFT
+goto parse_args
+
+:set_prompt_inputs
+set "PASS_TO_RUN_EXAMPLE=--prompt-inputs %~2 !PASS_TO_RUN_EXAMPLE!"
+
+SHIFT
 SHIFT
 goto parse_args
 
@@ -1172,7 +1183,7 @@ for %%a in (%*) do (
    ) else (
       set "option!option!=%%a"
       if "!option!" equ "--solr-home" set "SOLR_HOME=%%a"
-      if "!option!" equ "--server-dir" set "SOLR_SERVER_DIR=%%a"    
+      if "!option!" equ "--server-dir" set "SOLR_SERVER_DIR=%%a"
       if not "!option!" equ "--solr-home" if not "!option!" equ "--server-dir" (
         set "AUTH_PARAMS=!AUTH_PARAMS! !option! %%a"
       )

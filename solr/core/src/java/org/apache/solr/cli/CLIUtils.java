@@ -19,7 +19,6 @@ package org.apache.solr.cli;
 
 import static org.apache.solr.common.SolrException.ErrorCode.FORBIDDEN;
 import static org.apache.solr.common.SolrException.ErrorCode.UNAUTHORIZED;
-import static org.apache.solr.common.params.CommonParams.SYSTEM_INFO_PATH;
 
 import java.io.IOException;
 import java.net.SocketException;
@@ -28,7 +27,6 @@ import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -38,21 +36,18 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.exec.OS;
 import org.apache.solr.client.solrj.SolrClient;
-import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.SolrServerException;
-import org.apache.solr.client.solrj.impl.CloudHttp2SolrClient;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
-import org.apache.solr.client.solrj.impl.Http2SolrClient;
 import org.apache.solr.client.solrj.impl.SolrZkClientTimeout;
-import org.apache.solr.client.solrj.request.CollectionAdminRequest;
+import org.apache.solr.client.solrj.jetty.HttpJettySolrClient;
+import org.apache.solr.client.solrj.request.CollectionsApi;
 import org.apache.solr.client.solrj.request.CoresApi;
-import org.apache.solr.client.solrj.request.GenericSolrRequest;
+import org.apache.solr.client.solrj.request.SystemInfoRequest;
+import org.apache.solr.client.solrj.response.SystemInfoResponse;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.ZkStateReader;
-import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.util.EnvUtils;
-import org.apache.solr.common.util.NamedList;
 
 /** Utility class that holds various helper methods for the CLI. */
 public final class CLIUtils {
@@ -109,8 +104,8 @@ public final class CLIUtils {
     if (!barePath && !solrUrl.endsWith("/solr") && !solrUrl.contains("/solr/")) {
       solrUrl = solrUrl + "/solr";
     }
-    Http2SolrClient.Builder builder =
-        new Http2SolrClient.Builder(solrUrl)
+    var builder =
+        new HttpJettySolrClient.Builder(solrUrl)
             .withMaxConnectionsPerHost(32)
             .withKeyStoreReloadInterval(-1, TimeUnit.SECONDS)
             .withOptionalBasicAuthCredentials(credentials);
@@ -200,8 +195,7 @@ public final class CLIUtils {
                 + solrUrl
                 + ".");
       } else {
-        try (CloudSolrClient cloudSolrClient = getCloudHttp2SolrClient(zkHost)) {
-          cloudSolrClient.connect();
+        try (CloudSolrClient cloudSolrClient = getCloudSolrClient(zkHost)) {
           Set<String> liveNodes = cloudSolrClient.getClusterState().getLiveNodes();
           if (liveNodes.isEmpty())
             throw new IllegalStateException(
@@ -250,12 +244,7 @@ public final class CLIUtils {
 
     try (SolrClient solrClient = getSolrClient(cli)) {
       // hit Solr to get system info
-      NamedList<Object> systemInfo =
-          solrClient.request(
-              new GenericSolrRequest(SolrRequest.METHOD.GET, CommonParams.SYSTEM_INFO_PATH));
-
-      // convert raw JSON into user-friendly output
-      Map<String, Object> status = StatusTool.reportStatus(systemInfo, solrClient);
+      Map<String, Object> status = StatusTool.reportStatus(solrClient);
       @SuppressWarnings("unchecked")
       Map<String, Object> cloud = (Map<String, Object>) status.get("cloud");
       if (cloud != null) {
@@ -270,7 +259,7 @@ public final class CLIUtils {
     return zkHost;
   }
 
-  public static SolrZkClient getSolrZkClient(CommandLine cli, String zkHost) throws Exception {
+  public static SolrZkClient getSolrZkClient(CommandLine cli, String zkHost) {
     if (zkHost == null) {
       throw new IllegalStateException(
           "Solr at "
@@ -283,13 +272,13 @@ public final class CLIUtils {
         .build();
   }
 
-  public static CloudHttp2SolrClient getCloudHttp2SolrClient(String zkHost) {
-    return getCloudHttp2SolrClient(zkHost, null);
+  public static CloudSolrClient getCloudSolrClient(String zkHost) {
+    return getCloudSolrClient(zkHost, null);
   }
 
-  public static CloudHttp2SolrClient getCloudHttp2SolrClient(
-      String zkHost, Http2SolrClient.Builder builder) {
-    return new CloudHttp2SolrClient.Builder(Collections.singletonList(zkHost), Optional.empty())
+  public static CloudSolrClient getCloudSolrClient(
+      String zkHost, HttpJettySolrClient.Builder builder) {
+    return new CloudSolrClient.Builder(Collections.singletonList(zkHost), Optional.empty())
         .withHttpClientBuilder(builder)
         .build();
   }
@@ -320,17 +309,17 @@ public final class CLIUtils {
       String solrUrl, String collection, String credentials) {
     boolean exists = false;
     try (var solrClient = getSolrClient(solrUrl, credentials)) {
-      NamedList<Object> existsCheckResult = solrClient.request(new CollectionAdminRequest.List());
-      @SuppressWarnings("unchecked")
-      List<String> collections = (List<String>) existsCheckResult.get("collections");
-      exists = collections != null && collections.contains(collection);
+      var response = new CollectionsApi.ListCollections().process(solrClient);
+      exists =
+          response != null
+              && response.collections != null
+              && response.collections.contains(collection);
     } catch (Exception exc) {
       // just ignore it since we're only interested in a positive result here
     }
     return exists;
   }
 
-  @SuppressWarnings("unchecked")
   public static boolean safeCheckCoreExists(String solrUrl, String coreName, String credentials) {
     boolean exists = false;
     try (var solrClient = getSolrClient(solrUrl, credentials)) {
@@ -338,8 +327,13 @@ public final class CLIUtils {
       final long startWaitAt = System.nanoTime();
       do {
         if (wait) {
-          final int clamPeriodForStatusPollMs = 1000;
-          Thread.sleep(clamPeriodForStatusPollMs);
+          final int pollIntervalMs = 1000;
+          try {
+            TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
+          } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            break;
+          }
         }
         final var coreStatusReq = new CoresApi.GetCoreStatus(coreName);
         final var coreStatusRsp = coreStatusReq.process(solrClient);
@@ -358,9 +352,8 @@ public final class CLIUtils {
   }
 
   public static boolean isCloudMode(SolrClient solrClient) throws SolrServerException, IOException {
-    NamedList<Object> systemInfo =
-        solrClient.request(new GenericSolrRequest(SolrRequest.METHOD.GET, SYSTEM_INFO_PATH));
-    return "solrcloud".equals(systemInfo.get("mode"));
+    SystemInfoResponse sysResponse = new SystemInfoRequest().process(solrClient);
+    return "solrcloud".equals(sysResponse.getMode());
   }
 
   public static Path getConfigSetsDir(Path solrInstallDir) {

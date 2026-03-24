@@ -16,8 +16,6 @@
  */
 package org.apache.solr.client.solrj.apache;
 
-import static org.apache.solr.common.util.Utils.getObjectByPath;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -27,6 +25,7 @@ import java.io.UnsupportedEncodingException;
 import java.lang.invoke.MethodHandles;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
+import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.security.Principal;
@@ -51,6 +50,7 @@ import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
@@ -72,17 +72,17 @@ import org.apache.http.entity.mime.content.StringBody;
 import org.apache.http.message.BasicHeader;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.solr.client.api.util.SolrVersion;
-import org.apache.solr.client.solrj.ResponseParser;
+import org.apache.solr.client.solrj.RemoteSolrException;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.SolrServerException;
-import org.apache.solr.client.solrj.impl.Http2SolrClient;
 import org.apache.solr.client.solrj.impl.HttpJdkSolrClient;
-import org.apache.solr.client.solrj.impl.InputStreamResponseParser;
-import org.apache.solr.client.solrj.impl.JavaBinRequestWriter;
-import org.apache.solr.client.solrj.impl.JavaBinResponseParser;
-import org.apache.solr.client.solrj.impl.RemoteExecutionException;
+import org.apache.solr.client.solrj.jetty.HttpJettySolrClient;
+import org.apache.solr.client.solrj.request.JavaBinRequestWriter;
 import org.apache.solr.client.solrj.request.RequestWriter;
+import org.apache.solr.client.solrj.response.InputStreamResponseParser;
+import org.apache.solr.client.solrj.response.JavaBinResponseParser;
+import org.apache.solr.client.solrj.response.ResponseParser;
 import org.apache.solr.client.solrj.util.ClientUtils;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.CommonParams;
@@ -92,13 +92,12 @@ import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ExecutorUtil;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SolrNamedThreadFactory;
-import org.apache.solr.common.util.Utils;
 import org.slf4j.MDC;
 
 /**
  * A SolrClient implementation that talks directly to a Solr server via Apache HTTP client
  *
- * @deprecated Please use {@link Http2SolrClient} or {@link HttpJdkSolrClient}
+ * @deprecated Please use {@link HttpJettySolrClient} or {@link HttpJdkSolrClient}
  */
 @Deprecated(since = "9.0")
 public class HttpSolrClient extends SolrClient {
@@ -130,7 +129,7 @@ public class HttpSolrClient extends SolrClient {
    * <p>This parser represents the default Response Parser chosen to parse the response if the
    * parser were not specified as part of the request.
    *
-   * @see org.apache.solr.client.solrj.impl.JavaBinResponseParser
+   * @see JavaBinResponseParser
    */
   protected volatile ResponseParser parser;
 
@@ -224,7 +223,7 @@ public class HttpSolrClient extends SolrClient {
    * @return The {@link org.apache.solr.common.util.NamedList} result
    * @throws IOException If there is a low-level I/O error.
    * @see #request(org.apache.solr.client.solrj.SolrRequest,
-   *     org.apache.solr.client.solrj.ResponseParser)
+   *     org.apache.solr.client.solrj.response.ResponseParser)
    */
   @Override
   public NamedList<Object> request(final SolrRequest<?> request, String collection)
@@ -545,8 +544,7 @@ public class HttpSolrClient extends SolrClient {
       throws SolrServerException {
     method.addHeader("User-Agent", USER_AGENT);
 
-    org.apache.http.client.config.RequestConfig.Builder requestConfigBuilder =
-        HttpClientUtil.createDefaultRequestConfigBuilder();
+    RequestConfig.Builder requestConfigBuilder = HttpClientUtil.createDefaultRequestConfigBuilder();
     requestConfigBuilder.setSocketTimeout(soTimeout);
     requestConfigBuilder.setConnectTimeout(connectionTimeout);
 
@@ -603,7 +601,7 @@ public class HttpSolrClient extends SolrClient {
           break;
         default:
           if (processor == null || contentType == null) {
-            throw new SolrClient.RemoteSolrException(
+            throw new RemoteSolrException(
                 baseUrl,
                 httpStatus,
                 "non ok status: "
@@ -635,7 +633,7 @@ public class HttpSolrClient extends SolrClient {
                 .collect(Collectors.toSet());
         if (!processorMimeTypes.contains(mimeType)) {
           if (isUnmatchedErrorCode(mimeType, httpStatus)) {
-            throw new SolrClient.RemoteSolrException(
+            throw new RemoteSolrException(
                 baseUrl,
                 httpStatus,
                 "non ok status: "
@@ -653,10 +651,10 @@ public class HttpSolrClient extends SolrClient {
           try {
             ByteArrayOutputStream body = new ByteArrayOutputStream();
             respBody.transferTo(body);
-            throw new SolrClient.RemoteSolrException(
+            throw new RemoteSolrException(
                 baseUrl, httpStatus, prefix + body.toString(exceptionCharset), null);
           } catch (IOException e) {
-            throw new SolrClient.RemoteSolrException(
+            throw new RemoteSolrException(
                 baseUrl,
                 httpStatus,
                 "Could not parse response with encoding " + exceptionCharset,
@@ -669,54 +667,24 @@ public class HttpSolrClient extends SolrClient {
       try {
         rsp = processor.processResponse(respBody, charsetName);
       } catch (Exception e) {
-        throw new SolrClient.RemoteSolrException(baseUrl, httpStatus, e.getMessage(), e);
+        throw new RemoteSolrException(baseUrl, httpStatus, e.getMessage(), e);
       }
       Object error = rsp == null ? null : rsp.get("error");
-      if (error != null
-          && (isV2Api
-              || String.valueOf(getObjectByPath(error, true, errPath))
-                  .endsWith("ExceptionWithErrObject"))) {
-        throw RemoteExecutionException.create(baseUrl, rsp);
+      if (error != null && isV2Api) {
+        throw new RemoteSolrException(baseUrl, httpStatus, error, true);
       }
-      if (httpStatus != HttpStatus.SC_OK && !isV2Api) {
-        NamedList<String> metadata = null;
-        String reason = null;
-        try {
-          if (error != null) {
-            reason = (String) Utils.getObjectByPath(error, false, Collections.singletonList("msg"));
-            if (reason == null) {
-              reason =
-                  (String) Utils.getObjectByPath(error, false, Collections.singletonList("trace"));
-            }
-            Object metadataObj =
-                Utils.getObjectByPath(error, false, Collections.singletonList("metadata"));
-            if (metadataObj instanceof NamedList) {
-              metadata = (NamedList<String>) metadataObj;
-            } else if (metadataObj instanceof List) {
-              // NamedList parsed as List convert to NamedList again
-              List<Object> list = (List<Object>) metadataObj;
-              metadata = new NamedList<>(list.size() / 2);
-              for (int i = 0; i < list.size(); i += 2) {
-                metadata.add((String) list.get(i), (String) list.get(i + 1));
-              }
-            } else if (metadataObj instanceof Map) {
-              metadata = new NamedList((Map) metadataObj);
-            }
-          }
-        } catch (Exception ex) {
-        }
-        if (reason == null) {
+      if (httpStatus != 200 && !isV2Api) {
+        if (error == null) {
           StringBuilder msg = new StringBuilder();
           msg.append(response.getStatusLine().getReasonPhrase())
               .append("\n\n")
               .append("request: ")
               .append(method.getURI());
-          reason = java.net.URLDecoder.decode(msg.toString(), FALLBACK_CHARSET);
+          String reason = URLDecoder.decode(msg.toString(), FALLBACK_CHARSET);
+          throw new RemoteSolrException(baseUrl, httpStatus, reason, null);
+        } else {
+          throw new RemoteSolrException(baseUrl, httpStatus, error);
         }
-        SolrClient.RemoteSolrException rss =
-            new SolrClient.RemoteSolrException(baseUrl, httpStatus, reason, null);
-        if (metadata != null) rss.setMetadata(metadata);
-        throw rss;
       }
       return rsp;
     } catch (ConnectException e) {
@@ -809,7 +777,7 @@ public class HttpSolrClient extends SolrClient {
   /**
    * Constructs {@link HttpSolrClient} instances from provided configuration.
    *
-   * @deprecated Please use {@link Http2SolrClient}
+   * @deprecated Please use {@link HttpJettySolrClient}
    */
   @Deprecated(since = "9.0")
   public static class Builder extends SolrClientBuilder<Builder> {
