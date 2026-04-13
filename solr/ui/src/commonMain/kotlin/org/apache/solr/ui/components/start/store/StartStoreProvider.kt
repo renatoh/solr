@@ -33,7 +33,6 @@ import org.apache.solr.ui.components.start.store.StartStore.Intent
 import org.apache.solr.ui.components.start.store.StartStore.Label
 import org.apache.solr.ui.components.start.store.StartStore.State
 import org.apache.solr.ui.errors.UnauthorizedException
-import org.apache.solr.ui.utils.DEFAULT_SOLR_URL
 import org.apache.solr.ui.utils.parseError
 
 /**
@@ -82,9 +81,7 @@ internal class StartStoreProvider(
             when (intent) {
                 is Intent.UpdateSolrUrl -> dispatch(Message.UrlUpdated(intent.url))
                 is Intent.Connect -> {
-                    var urlValue = state().url
-                    if (urlValue == "") urlValue = DEFAULT_SOLR_URL // use placeholder value if empty
-
+                    val urlValue = state().url
                     try {
                         val url = parseUrl(urlValue) ?: throw URLParserException(
                             urlString = urlValue,
