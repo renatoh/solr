@@ -21,9 +21,9 @@
   <Appenders>
 
     <Console name="STDOUT" target="SYSTEM_OUT">
-      <PatternLayout>
+      <PatternLayout disableAnsi="false">
         <Pattern>
-          %maxLen{%d{yyyy-MM-dd HH:mm:ss.SSS} %-5p (%t) [%notEmpty{c:%X{collection}}%notEmpty{ s:%X{shard}}%notEmpty{ r:%X{replica}}%notEmpty{ x:%X{core}}%notEmpty{ t:%X{trace_id}}] %c{1.} %m}{10240}%n
+          %highlight{%maxLen{%d{yyyy-MM-dd HH:mm:ss.SSS} %-5p (%t) [%notEmpty{c:%X{collection}}%notEmpty{ s:%X{shard}}%notEmpty{ r:%X{replica}}%notEmpty{ x:%X{core}}%notEmpty{ t:%X{trace_id}}] %c{1.} %m}{10240}}%n
         </Pattern>
       </PatternLayout>
     </Console>
