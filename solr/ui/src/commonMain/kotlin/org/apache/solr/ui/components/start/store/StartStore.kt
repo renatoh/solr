@@ -71,7 +71,7 @@ internal interface StartStore : Store<Intent, State, Label> {
      * State class that holds the data of the [StartStore].
      */
     data class State(
-        val url: String = defaultSolrUrl(),
+        val url: String = "",
         val error: Throwable? = null,
     )
 }
