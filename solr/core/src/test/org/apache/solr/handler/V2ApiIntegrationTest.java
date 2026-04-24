@@ -282,6 +282,20 @@ public class V2ApiIntegrationTest extends SolrCloudTestCase {
     assertRSECodeAndMessage(ex2, 400, "Could not find collection", "coll-does-not-exist");
   }
 
+  @Test
+  public void testCreateCollectionWithNumericNameIsRejected() {
+    final V2Request request =
+        new V2Request.Builder("/collections")
+            .withMethod(SolrRequest.METHOD.POST)
+            .withPayload("{\"name\": 123, \"numShards\": 1}")
+            .build();
+
+    final RemoteSolrException ex =
+        expectThrows(RemoteSolrException.class, () -> request.process(cluster.getSolrClient()));
+
+    assertEquals(400, ex.code());
+  }
+
   private void assertRSECodeAndMessage(
       RemoteSolrException rse, int expectedCode, String... expectedMessagePieces) {
     assertEquals(expectedCode, rse.code());
