@@ -22,10 +22,15 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.MultivaluedHashMap;
 import jakarta.ws.rs.core.UriInfo;
+import java.io.ByteArrayInputStream;
+import java.lang.annotation.Annotation;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.client.api.model.CreateCollectionRequestBody;
 import org.apache.solr.client.api.model.CreateReplicaRequestBody;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -94,6 +99,30 @@ public class PostRequestLoggingFilterTest extends SolrTestCaseJ4 {
         PostRequestLoggingFilter.filterAndStringifyQueryParameters(queryParams);
 
     assertEquals("paramName1=paramValue1&paramName2=paramValue2", queryParamStr);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testCachingJsonMessageBodyReaderDelegateUsesConfiguredObjectMapper()
+      throws Exception {
+    final var delegate = new MessageBodyReaders.CachingJsonMessageBodyReader().getDelegate();
+
+    final var entityStream =
+        new ByteArrayInputStream(
+            "{\"name\": \"test\", \"unknownField\": \"someValue\"}"
+                .getBytes(StandardCharsets.UTF_8));
+
+    final var result =
+        (CreateCollectionRequestBody)
+            delegate.readFrom(
+                (Class<Object>) (Class<?>) CreateCollectionRequestBody.class,
+                CreateCollectionRequestBody.class,
+                new Annotation[0],
+                MediaType.APPLICATION_JSON_TYPE,
+                new MultivaluedHashMap<>(),
+                entityStream);
+
+    assertEquals("test", result.name);
   }
 
   @Test
